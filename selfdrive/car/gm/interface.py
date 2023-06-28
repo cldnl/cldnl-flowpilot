@@ -17,7 +17,7 @@ class CarInterface(CarInterfaceBase):
     params = CarControllerParams()
     return params.ACCEL_MIN, params.ACCEL_MAX
 
-  # Determined by iteratively plotting and minimizing error for f(angle, speed) = steer.
+ # Determined by iteratively plotting and minimizing error for f(angle, speed) = steer.
   @staticmethod
   def get_steer_feedforward_volt(desired_angle, v_ego):
     desired_angle *= 0.02904609
@@ -29,12 +29,18 @@ class CarInterface(CarInterfaceBase):
     desired_angle *= 0.09760208
     sigmoid = desired_angle / (1 + fabs(desired_angle))
     return 0.04689655 * sigmoid * (v_ego + 10.028217)
+  
+  @staticmethod
+  def get_steer_feedforward_silverado(desired_angle, v_ego):
+    return desired_angle * v_ego
 
   def get_steer_feedforward_function(self):
-    if self.CP.carFingerprint == CAR.VOLT:
+    if self.CP.carFingerprint in {CAR.VOLT, CAR.VOLT_NR}:
       return self.get_steer_feedforward_volt
-    elif self.CP.carFingerprint == CAR.ACADIA:
+    elif self.CP.carFingerprint in {CAR.ACADIA, CAR.ACADIA_NR}:
       return self.get_steer_feedforward_acadia
+    elif self.CP.carFingerprint == CAR.SILVERADO_NR:
+      return self.get_steer_feedforward_silverado
     else:
       return CarInterfaceBase.get_steer_feedforward_default
 
@@ -43,7 +49,10 @@ class CarInterface(CarInterfaceBase):
     ret = CarInterfaceBase.get_std_params(candidate, fingerprint)
     ret.carName = "gm"
     ret.safetyConfigs = [get_safety_config(car.CarParams.SafetyModel.gm)]
+    ret.unsafeMode = 1 # UNSAFE_DISABLE_DISENGAGE_ON_GAS
     ret.pcmCruise = False  # stock cruise control is kept off
+    ret.openpilotLongitudinalControl = True # ASCM vehicles use OP for long
+    ret.radarOffCan = False # ASCM vehicles (typically) have radar
 
     # These cars have been put into dashcam only due to both a lack of users and test coverage.
     # These cars likely still work fine. Once a user confirms each car works and a test route is
@@ -134,6 +143,23 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.13, 0.24], [0.01, 0.02]]
       ret.lateralTuning.pid.kf = 0.000045
       tire_stiffness_factor = 1.0
+
+    elif candidate == CAR.SILVERADO_NR:
+      ret.minEnableSpeed = -1. # engage speed is decided by pcm
+      ret.minSteerSpeed = -1 * CV.MPH_TO_MS
+      ret.mass = 2241. + STD_CARGO_KG
+      ret.wheelbase = 3.745
+      ret.steerRatio = 16.3 # Determined by skip # 16.3 # From a 2019 SILVERADO
+      ret.lateralTuning.pid.kpBP = [i * CV.MPH_TO_MS for i in [20., 80.]]
+      ret.lateralTuning.pid.kpV = [0.18, 0.3]
+      ret.lateralTuning.pid.kiBP = [0.0]
+      ret.lateralTuning.pid.kiV = [0.025]
+      ret.lateralTuning.pid.kdV = [0.35]
+      ret.lateralTuning.pid.kf = 0.0015 # !!! ONLY for (angle * vEgo) feedforward !!!
+      ret.centerToFront = ret.wheelbase * 0.49
+      ret.steerRateCost = 1.0
+      ret.steerActuatorDelay = 0.075 # Determined by skip # 0.075
+      ret.pcmCruise = True # TODO: see if this resolves cruiseMismatch
 
     # TODO: get actual value, for now starting with reasonable value for
     # civic and scaling by mass and wheelbase
